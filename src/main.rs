@@ -1,5 +1,6 @@
 use std::io::{self, prelude::*};
 use std::net::{TcpListener, TcpStream};
+use std::thread;
 
 fn connection_loop(mut stream: TcpStream) -> io::Result<()> {
     let mut buffer = [0; 1024];
@@ -22,7 +23,9 @@ fn main() -> io::Result<()> {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                connection_loop(stream)?;
+                thread::spawn(move || {
+                    connection_loop(stream).expect("error in connection loop");
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
