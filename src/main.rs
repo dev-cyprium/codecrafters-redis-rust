@@ -2,17 +2,24 @@ use std::io::{self, prelude::*};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
+use redis_starter_rust::{eval, parse};
+
 fn connection_loop(mut stream: TcpStream) -> io::Result<()> {
-    let mut buffer = [0; 1024];
+    let mut buffer = [0; 256];
 
     while let Ok(n) = stream.read(&mut buffer) {
         if n == 0 {
             break; // connection was closed
         }
 
-        stream.write(b"+PONG\r\n")?;
-    }
+        let buffer = &buffer[..n];
+        println!("RAW BUFFER: {:?}", String::from_utf8_lossy(buffer));
+        let mut offset = 0;
 
+        let r_values = parse(&buffer, &mut offset);
+        println!("PARSED: {:?}", r_values);
+        eval(&r_values, &mut stream, None)
+    }
     Ok(())
 }
 
