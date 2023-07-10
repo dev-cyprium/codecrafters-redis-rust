@@ -1,9 +1,12 @@
+use commands::{
+    EchoCommand, GetCommand, PingCommand, RedisCommand, RedisValueBag, SetCommand, Task,
+    UnknownCommand,
+};
 use std::io::prelude::*;
 use std::net::TcpStream;
 
-use commands::Command;
-
 mod commands;
+mod memory;
 
 #[derive(Debug, Clone)]
 pub enum RedisValue {
@@ -11,49 +14,64 @@ pub enum RedisValue {
     Error(String),
     Integer(i64),
     BulkString(String),
-    Array(Vec<RedisValue>),
+    Array(Vec<RedisValueBag>),
 }
 
-pub fn eval(val: &RedisValue, stream: &mut TcpStream, next_val: Option<&RedisValue>) {
-    match val {
-        RedisValue::SimpleString(s) => println!("SimpleString: {}", s),
-        RedisValue::Error(s) => println!("Error: {}", s),
-        RedisValue::Integer(i) => println!("Integer: {}", i),
-        RedisValue::BulkString(s) => {
-            let cloned_option = next_val.cloned();
-            if let Some(cmd) = to_command(s.as_str(), cloned_option) {
-                let tasks = cmd.run();
-                for task in tasks {
-                    match task {
-                        commands::Task::NetworkWrite(s) => {
-                            stream.write(s.as_bytes()).unwrap();
+pub fn eval(val: &mut RedisValueBag, stream: &mut TcpStream) {
+    let mut tasks = Vec::new();
+    let mut tasks = match val.value {
+        RedisValue::Array(ref mut args) => {
+            let mut command: Box<dyn RedisCommand> = Box::new(UnknownCommand {});
+            let mut command_idx = 0;
+            for i in 0..args.len() {
+                if !args[i].processed {
+                    if i == 0 {
+                        match args[i].value {
+                            RedisValue::BulkString(ref s) => match s.to_lowercase().as_str() {
+                                "ping" => command = Box::new(PingCommand {}),
+                                "echo" => command = Box::new(EchoCommand { value: None }),
+                                "set" => {
+                                    command = Box::new(SetCommand {
+                                        key: None,
+                                        value: None,
+                                    })
+                                }
+                                "get" => command = Box::new(GetCommand { key: None }),
+                                _ => {}
+                            },
+                            _ => {}
                         }
-                        commands::Task::NetworkError(s) => {
-                            stream.write(s.as_bytes()).unwrap();
-                        }
+                    } else {
+                        command.set_arg(command_idx, args[i].value.clone());
+                        command_idx += 1;
                     }
+                    args[i].processed = true;
                 }
             }
+            tasks.extend(command.run());
+            tasks
         }
-        RedisValue::Array(a) => {
-            for (i, val) in a.iter().enumerate() {
-                if i + 1 < a.len() {
-                    let next_val = &a[i + 1];
-                    eval(val, stream, Some(next_val));
-                } else {
-                    eval(val, stream, None);
-                }
+        _ => vec![Task::NetworkError("-ERROR (invalid value)\r\n".to_string())],
+    };
+
+    for task in tasks.drain(..) {
+        match task {
+            Task::NetworkWrite(s) => {
+                stream.write(s.as_bytes()).unwrap();
+            }
+            Task::NetworkError(s) => {
+                stream.write(s.as_bytes()).unwrap();
             }
         }
     }
 }
 
-pub fn parse(buffer: &[u8], offset: &mut usize) -> RedisValue {
+pub fn parse(buffer: &[u8], offset: &mut usize) -> RedisValueBag {
     if offset >= &mut buffer.len() {
-        return RedisValue::Error("buffer too short".to_string());
+        return RedisValueBag::new(RedisValue::Error("buffer too short".to_string()));
     }
 
-    match buffer[*offset] {
+    let r_val: RedisValue = match buffer[*offset] {
         b'*' => {
             *offset += 1;
             let length = get_length(buffer, offset);
@@ -77,7 +95,9 @@ pub fn parse(buffer: &[u8], offset: &mut usize) -> RedisValue {
             RedisValue::BulkString(String::from_utf8_lossy(&bulk_string).to_string())
         }
         _ => RedisValue::Error("unknown type".to_string()),
-    }
+    };
+
+    RedisValueBag::new(r_val)
 }
 
 fn get_length(buffer: &[u8], offset: &mut usize) -> u32 {
@@ -88,12 +108,4 @@ fn get_length(buffer: &[u8], offset: &mut usize) -> u32 {
     }
     *offset += 1;
     length
-}
-
-fn to_command(str: &str, next: Option<RedisValue>) -> Option<Command> {
-    match str.to_lowercase().as_str() {
-        "ping" => Some(Command::new("ping".to_string(), vec![])),
-        "echo" => Some(Command::new("echo".to_string(), vec![next])),
-        _ => None,
-    }
 }

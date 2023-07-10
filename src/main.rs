@@ -16,9 +16,9 @@ fn connection_loop(mut stream: TcpStream) -> io::Result<()> {
         println!("RAW BUFFER: {:?}", String::from_utf8_lossy(buffer));
         let mut offset = 0;
 
-        let r_values = parse(&buffer, &mut offset);
-        println!("PARSED: {:?}", r_values);
-        eval(&r_values, &mut stream, None)
+        let mut r_values = parse(&buffer, &mut offset);
+        // println!("PARSED: {:?}", r_values);
+        eval(&mut r_values, &mut stream);
     }
     Ok(())
 }
