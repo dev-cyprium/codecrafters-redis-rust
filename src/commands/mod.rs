@@ -7,18 +7,6 @@ pub trait RedisCommand {
     fn run(&self) -> Vec<Task>;
     fn num_args(&self) -> usize;
     fn set_arg(&mut self, idx: usize, val: RedisValue);
-    fn populate_args(&mut self, args: Option<&mut [RedisValueBag]>) {
-        if let Some(args) = args {
-            for i in 0..self.num_args() {
-                if args[i].processed {
-                    continue;
-                }
-
-                args[i].processed = true;
-                self.set_arg(i, args[i].value.clone());
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +31,8 @@ pub struct EchoCommand {
 pub struct SetCommand {
     pub key: Option<RedisValue>,
     pub value: Option<RedisValue>,
+    pub ttl: Option<RedisValue>,
+    pub cache: bool,
 }
 pub struct GetCommand {
     pub key: Option<RedisValue>,
@@ -123,7 +113,7 @@ impl RedisCommand for SetCommand {
     fn run(&self) -> Vec<Task> {
         match (&self.key, &self.value) {
             (Some(RedisValue::BulkString(k)), Some(RedisValue::BulkString(v))) => {
-                set_value(k.as_str(), v.as_str());
+                set_value(k.as_str(), v.as_str(), self.cache, self.ttl.clone());
                 vec![Task::NetworkWrite(format!("+OK\r\n"))]
             }
             _ => vec![Task::NetworkError("-ERROR (invalid value)\r\n".to_string())],
@@ -138,7 +128,11 @@ impl RedisCommand for SetCommand {
         match idx {
             0 => self.key = Some(val),
             1 => self.value = Some(val),
-            _ => {}
+            2 => self.cache = true,
+            3 => self.ttl = Some(val),
+            _ => {
+                panic!("SetCommand::set_arg: invalid index")
+            }
         }
     }
 }

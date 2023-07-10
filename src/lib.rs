@@ -34,6 +34,8 @@ pub fn eval(val: &mut RedisValueBag, stream: &mut TcpStream) {
                                     command = Box::new(SetCommand {
                                         key: None,
                                         value: None,
+                                        ttl: None,
+                                        cache: false,
                                     })
                                 }
                                 "get" => command = Box::new(GetCommand { key: None }),
